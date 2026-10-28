@@ -52,9 +52,8 @@ internal fun MessageInfoDialog(
         )
         else -> stringResource(R.string.token_count, tokenUsage.input)
     }
-    val generationSpeed = tokenUsage.generationTokensPerSecond?.let {
-        String.format(Locale.getDefault(), "~%.1f token/s", it)
-    } ?: "—"
+    val generationSpeed = tokenUsage.generationTokensPerSecond
+        ?.let { tokenRateText(it) } ?: "—"
     val outputTokens = tokenUsage.output?.let {
         stringResource(R.string.token_count, it)
     } ?: "—"
