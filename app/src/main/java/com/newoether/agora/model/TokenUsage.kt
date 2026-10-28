@@ -24,6 +24,11 @@ data class TokenUsage(
     val reasoningTokenCount: Int? = null,
     /** Sum of observed generation intervals; excludes first-content wait and tool execution. */
     val generationDurationMs: Long? = null,
+    /**
+     * First request's wait from issue to first streamed content; later tool rounds do not add to
+     * it, because only the reply's first token is a latency the reader waited on.
+     */
+    val timeToFirstTokenMs: Long? = null,
 ) {
     fun plusRequest(other: TokenUsage): TokenUsage = TokenUsage(
         totalTokenCount = addCounts(totalTokenCount, other.totalTokenCount),
@@ -40,6 +45,8 @@ data class TokenUsage(
         generationDurationMs = if (generationDurationMs != null && other.generationDurationMs != null)
             generationDurationMs.takeIf { it <= Long.MAX_VALUE - other.generationDurationMs }
                 ?.plus(other.generationDurationMs) else null,
+        // Requests are added in order, so left wins: the reply's TTFT is its first request's.
+        timeToFirstTokenMs = timeToFirstTokenMs ?: other.timeToFirstTokenMs,
     )
 
     companion object {
@@ -52,6 +59,7 @@ data class TokenUsage(
             outputTokenCount: Int?,
             reasoningTokenCount: Int?,
             generationDurationMs: Long? = null,
+            timeToFirstTokenMs: Long? = null,
         ): TokenUsage? {
             if (
                 totalTokenCount <= 0 &&
@@ -73,6 +81,7 @@ data class TokenUsage(
                 outputTokenCount = outputTokenCount.nonNegativeOrNull(),
                 reasoningTokenCount = reasoningTokenCount.nonNegativeOrNull(),
                 generationDurationMs = generationDurationMs?.takeIf { it > 0 },
+                timeToFirstTokenMs = timeToFirstTokenMs?.takeIf { it > 0 },
             )
         }
 
@@ -98,14 +107,22 @@ data class TokenUsage(
 internal class RequestTokenUsageAccumulator(
     private val nowNanos: () -> Long = System::nanoTime,
 ) {
+    private var requestStartedNanos: Long? = null
     private var firstContentNanos: Long? = null
     private var lastContentNanos: Long? = null
+    private var firstTokenNanos: Long? = null
     private var completedGenerationNanos = 0L
 
     fun observeGenerationContent() {
         if (!requestActive) return
         val now = nowNanos()
-        if (firstContentNanos == null) firstContentNanos = now
+        if (firstContentNanos == null) {
+            firstContentNanos = now
+            val started = requestStartedNanos
+            if (firstTokenNanos == null && started != null) {
+                firstTokenNanos = (now - started).coerceAtLeast(0L)
+            }
+        }
         lastContentNanos = now
     }
 
@@ -120,6 +137,8 @@ internal class RequestTokenUsageAccumulator(
     fun resetGenerationTiming() {
         firstContentNanos = null
         lastContentNanos = null
+        firstTokenNanos = null
+        requestStartedNanos = null
         completedGenerationNanos = 0L
     }
 
@@ -131,6 +150,7 @@ internal class RequestTokenUsageAccumulator(
         check(!requestActive) { "A token-usage request is already active" }
         currentRequestUsage = null
         resetGenerationTiming()
+        requestStartedNanos = nowNanos()
         requestActive = true
     }
 
@@ -138,6 +158,7 @@ internal class RequestTokenUsageAccumulator(
     fun resetCurrentAttempt() {
         currentRequestUsage = null
         resetGenerationTiming()
+        if (requestActive) requestStartedNanos = nowNanos()
     }
 
     fun observeRequestSnapshot(usage: TokenUsage) {
@@ -152,6 +173,8 @@ internal class RequestTokenUsageAccumulator(
             val requestUsage = usage.copy(
                 generationDurationMs = usage.generationDurationMs
                     ?: (completedGenerationNanos / 1_000_000L).takeIf { it > 0 },
+                timeToFirstTokenMs = usage.timeToFirstTokenMs
+                    ?: (firstTokenNanos?.let { it / 1_000_000L })?.takeIf { it > 0 },
             )
             completedUsage = completedUsage?.plusRequest(requestUsage) ?: requestUsage
         }

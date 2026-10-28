@@ -159,7 +159,9 @@ class TokenUsageTest {
         accumulator.observeRequestSnapshot(replacement)
         accumulator.finishRequest()
         assertEquals(
-            baseline.plusRequest(replacement.copy(generationDurationMs = 50L)),
+            baseline.plusRequest(
+                replacement.copy(generationDurationMs = 50L, timeToFirstTokenMs = 7_500L),
+            ),
             accumulator.snapshot(),
         )
     }
@@ -206,7 +208,7 @@ class TokenUsageTest {
         val replacement = usage(total = 10, input = 6, output = 4)
         accumulator.observeRequestSnapshot(replacement)
         accumulator.finishRequest()
-        assertEquals(replacement, accumulator.snapshot())
+        assertEquals(replacement.copy(timeToFirstTokenMs = 8_500L), accumulator.snapshot())
         assertNull(accumulator.snapshot()?.generationDurationMs)
     }
 

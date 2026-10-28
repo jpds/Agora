@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="generation_speed_with_label">Velocidade média de geração: %1$s</string>
+    <string name="time_to_first_token_with_label">Tempo até o primeiro token: %1$s</string>
 </resources>

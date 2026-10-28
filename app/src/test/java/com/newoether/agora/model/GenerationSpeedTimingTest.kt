@@ -1,9 +1,11 @@
 package com.newoether.agora.model
 
+import com.newoether.agora.ui.chat.message.formatLatency
 import com.newoether.agora.ui.chat.message.tokenUsagePresentation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.util.Locale
 
 class GenerationSpeedTimingTest {
     @Test fun firstContentWaitToolGapsAndRepeatedUsageAreExcluded() {
@@ -23,6 +25,7 @@ class GenerationSpeedTimingTest {
         accumulator.observeRequestSnapshot(TokenUsage(140, inputTokenCount = 100, outputTokenCount = 40))
         accumulator.finishRequest()
         assertEquals(2_000L, accumulator.snapshot()?.generationDurationMs)
+        assertEquals(9_000L, accumulator.snapshot()?.timeToFirstTokenMs)
         assertEquals(20.0, tokenUsagePresentation(accumulator.snapshot()).generationTokensPerSecond!!, 0.001)
         clock = 100_000
         accumulator.beginRequest()
@@ -31,6 +34,8 @@ class GenerationSpeedTimingTest {
         accumulator.observeGenerationContent()
         accumulator.observeRequestSnapshot(TokenUsage(130, inputTokenCount = 100, outputTokenCount = 30))
         accumulator.finishRequest()
+        // A tool round starts after the reader already saw the first token, so it adds nothing.
+        assertEquals(9_000L, accumulator.snapshot()?.timeToFirstTokenMs)
         assertEquals(3_000L, accumulator.snapshot()?.generationDurationMs)
         assertEquals(70.0 / 3.0, tokenUsagePresentation(accumulator.snapshot()).generationTokensPerSecond!!, 0.001)
     }
@@ -67,5 +72,58 @@ class GenerationSpeedTimingTest {
         accumulator.observeRequestSnapshot(TokenUsage(10, outputTokenCount = 10))
         accumulator.finishRequest()
         assertEquals(1000L, accumulator.snapshot()?.generationDurationMs)
+    }
+
+    @Test fun firstTokenWaitIsMeasuredOnceForTheWholeReply() {
+        var clock = 0L
+        val accumulator = RequestTokenUsageAccumulator { clock * 1_000_000L }
+        accumulator.beginRequest()
+        clock = 420
+        accumulator.observeGenerationContent()
+        accumulator.observeRequestSnapshot(TokenUsage(12, inputTokenCount = 8, outputTokenCount = 4))
+        accumulator.finishRequest()
+        assertEquals(420L, accumulator.snapshot()?.timeToFirstTokenMs)
+        clock = 10_000
+        accumulator.beginRequest()
+        clock = 11_000
+        accumulator.observeGenerationContent()
+        accumulator.observeRequestSnapshot(TokenUsage(6, inputTokenCount = 3, outputTokenCount = 3))
+        accumulator.finishRequest()
+        assertEquals(420L, accumulator.snapshot()?.timeToFirstTokenMs)
+        assertEquals(420L, tokenUsagePresentation(accumulator.snapshot()).timeToFirstTokenMs)
+    }
+
+    @Test fun requestsWithoutContentNeverReportAFirstTokenWait() {
+        val accumulator = RequestTokenUsageAccumulator { 5L }
+        accumulator.beginRequest()
+        accumulator.observeRequestSnapshot(TokenUsage(10, outputTokenCount = 2))
+        accumulator.finishRequest()
+        assertNull(accumulator.snapshot()?.timeToFirstTokenMs)
+        assertNull(tokenUsagePresentation(accumulator.snapshot()).timeToFirstTokenMs)
+        assertNull(tokenUsagePresentation(TokenUsage(10, outputTokenCount = 2)).timeToFirstTokenMs)
+        assertNull(
+            tokenUsagePresentation(TokenUsage(10, outputTokenCount = 2, timeToFirstTokenMs = 0))
+                .timeToFirstTokenMs,
+        )
+    }
+
+    @Test fun retryRemeasuresFirstTokenWaitFromTheRetriedAttempt() {
+        var clock = 0L
+        val accumulator = RequestTokenUsageAccumulator { clock * 1_000_000L }
+        accumulator.beginRequest()
+        clock = 7_000
+        accumulator.observeGenerationContent()
+        accumulator.observeRequestSnapshot(TokenUsage(10, outputTokenCount = 10))
+        accumulator.resetCurrentAttempt()
+        clock = 20_000
+        accumulator.observeGenerationContent()
+        accumulator.observeRequestSnapshot(TokenUsage(10, outputTokenCount = 10))
+        accumulator.finishRequest()
+        assertEquals(13_000L, accumulator.snapshot()?.timeToFirstTokenMs)
+    }
+
+    @Test fun latencyFiguresReadInMillisecondsBelowASecond() {
+        assertEquals("420 ms", formatLatency(420, Locale.US))
+        assertEquals("1.2 s", formatLatency(1_249, Locale.US))
     }
 }

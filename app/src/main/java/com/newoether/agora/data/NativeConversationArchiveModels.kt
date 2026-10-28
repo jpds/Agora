@@ -125,6 +125,7 @@ internal data class NativeExportMessageEntity(
     val outputTokenCount: Int? = null,
     val reasoningTokenCount: Int? = null,
     val generationDurationMs: Long? = null,
+    val timeToFirstTokenMs: Long? = null,
     val status: String = "SUCCESS",
     val participant: String = "MODEL",
     val timestamp: Long,
